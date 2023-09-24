@@ -169,6 +169,10 @@ GLfloat remap(GLfloat x, GLfloat in_min, GLfloat in_max, GLfloat out_min, GLfloa
 	return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
 }
 
+float clampToCPUFloat(float x, float a, float b) { return max(a, min(b, x)); }
+
+int clampToCPUInt(int x, int a, int b) { return max(a, min(b, x)); }
+
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpszCmdLine, int iCmdShow)
 {
     // Function Declarations
