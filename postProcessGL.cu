@@ -94,7 +94,6 @@ __global__ void cudaProcess(unsigned int *g_odata, int imgw, int imgh,
   int bh = blockDim.y;
   int x = blockIdx.x * bw + tx;
   int y = blockIdx.y * bh + ty;
-
 #if 0
     uchar4 c4 = getPixel(x, y, inTex);
     g_odata[y*imgw+x] = rgbToInt(c4.z, c4.y, c4.x);

@@ -2,7 +2,7 @@ Log File is Created Succesfully
 ERASE BKGND is Called. 
 OpenGL Vendor: NVIDIA Corporation
 OpenGL Renderer: NVIDIA GeForce RTX 3080/PCIe/SSE2
-OpenGL Version: 4.6.0 NVIDIA 536.67
+OpenGL Version: 4.6.0 NVIDIA 537.42
 GLSL Version: 4.60 NVIDIA
 Number of Supported Extensions: 403
 GL_AMD_multi_draw_indirect
@@ -408,4 +408,8 @@ GL_SGIX_shadow
 GL_SUN_slice_accum
 GL_WIN_swap_hint
 WGL_EXT_swap_control
+Entering ToggleFullScreen().
+ERASE BKGND is Called. 
+ERASE BKGND is Called. 
+Entering ToggleFullScreen().
 Log File Is Closed Successfully.

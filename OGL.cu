@@ -25,6 +25,17 @@ using namespace vmath;
 #define WIN_HEIGHT 600
 #define FBO_WIDTH 512
 #define FBO_HEIGHT 512
+#define KERNEL_LENGTH 3
+#define KERNEL_RADIUS KERNEL_LENGTH/2
+
+struct uchar4CPU
+{
+    unsigned char x;
+    unsigned char y;
+    unsigned char z;
+    unsigned char w;
+};
+
 
 // Global Function Declarations
 LRESULT CALLBACK WndProc(HWND, UINT, WPARAM, LPARAM);
@@ -73,6 +84,7 @@ GLuint vbo_gpu;
 cudaError_t cudaResult;
 struct cudaGraphicsResource *graphicResource = NULL;
 BOOL onGPU = FALSE;
+BOOL onCPU = FALSE;
 
 unsigned int size_tex_data;
 unsigned int num_texels;
@@ -87,7 +99,7 @@ float rotate[3];
 char *ref_file = NULL;
 bool enable_cuda = true;
 bool animate = true;
-int blur_radius = 3/2;
+int blur_radius = 16;
 int max_blur_radius = 16;
 
 unsigned int *cuda_dest_resource;
@@ -163,7 +175,11 @@ int kernel[9];
 
 
 GLubyte cpuConvolutionArray[FBO_WIDTH][FBO_HEIGHT][4];
+float *new_array;
 
+uchar4CPU* sdataCPU;
+
+int tilewCPU = 16 + (2 * blur_radius);
 
 GLfloat remap(GLfloat x, GLfloat in_min, GLfloat in_max, GLfloat out_min, GLfloat out_max) {
 	return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
@@ -172,6 +188,42 @@ GLfloat remap(GLfloat x, GLfloat in_min, GLfloat in_max, GLfloat out_min, GLfloa
 float clampToCPUFloat(float x, float a, float b) { return max(a, min(b, x)); }
 
 int clampToCPUInt(int x, int a, int b) { return max(a, min(b, x)); }
+
+int rgbToIntCPU(float r, float g, float b) {
+  r = clampToCPUFloat(r, 0.0f, 255.0f);
+  g = clampToCPUFloat(g, 0.0f, 255.0f);
+  b = clampToCPUFloat(b, 0.0f, 255.0f);
+  return (int(b) << 16) | (int(g) << 8) | int(r);
+}
+
+uchar4CPU getPixelCPU(int x, int y, float* inTex) {
+    uchar4CPU ucres;
+//    float4 res = tex2D<float4>(inTex, x, y);
+//    uchar4CPU ucres = make_uchar4(res.x * 255.0f, res.y * 255.0f, res.z * 255.0f,
+//                               res.w * 255.0f);
+    if (x < 0)
+    {
+        x = 0;
+    }
+    if (x >= FBO_WIDTH)
+    {
+        x = FBO_WIDTH - 1;
+    }
+    if (y < 0)
+    {
+        y = 0;
+    }
+    if (y >= FBO_HEIGHT)
+    {
+        y = FBO_HEIGHT - 1;
+    }
+    ucres.x = (unsigned char) (inTex[(y * FBO_WIDTH + x) * 4 + 0] * 255.0f);
+    ucres.y = (unsigned char) (inTex[(y * FBO_WIDTH + x) * 4 + 1] * 255.0f);
+    ucres.z = (unsigned char) (inTex[(y * FBO_WIDTH + x) * 4 + 2] * 255.0f);
+    ucres.w = (unsigned char) 255;
+    
+  return ucres;
+}
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpszCmdLine, int iCmdShow)
 {
@@ -344,8 +396,15 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT iMsg, WPARAM wParam, LPARAM lParam)
                     blur_radius--;
                 }                
                 break;
-                case ' ':
-                    enable_cuda_postProcess = !enable_cuda_postProcess;
+                case 'C':
+                case 'c':
+                    onGPU = FALSE;
+                    onCPU = !onCPU;
+                break;
+                case 'G':
+                case 'g':
+                    onCPU = FALSE;
+                    onGPU = !onGPU;
                 break;
                 default:
                 break;
@@ -930,6 +989,9 @@ int initialize(void)
     kernel[8] = 1;
 
     genCPUTexture();
+    sdataCPU = (uchar4CPU*) malloc((16 + (2 * blur_radius)) * (16 + (2 * blur_radius)) *
+        sizeof(unsigned int));
+    new_array = (float *)malloc(FBO_WIDTH * FBO_HEIGHT * 4 * sizeof(float));
     return(0);
 }
 
@@ -1458,19 +1520,131 @@ void cpuConvolutionv2(float* myArray)
                     int x = blockId_x * bw + tx;
                     int y = blockId_y * bh + ty;
                     
+                    //uchar4CPU outObj = getPixelCPU(x,y, myArray);
+                    
+                    // cpuConvolutionArray[x][y][0] = (GLubyte) remap(myArray [(y*FBO_WIDTH + x) * 4 + 0], 0, 1, 0, 255);
+                    // cpuConvolutionArray[x][y][1] = (GLubyte) remap(myArray [(y*FBO_WIDTH + x) * 4 + 1] , 0, 1, 0, 255);
+                    // cpuConvolutionArray[x][y][2] = (GLubyte) remap(myArray [(y*FBO_WIDTH + x) * 4 + 2] , 0, 1, 0, 255);
+                    // cpuConvolutionArray[x][y][3] = (GLubyte) 255;
 
-                    cpuConvolutionArray[x][y][0] = (GLubyte) remap(myArray [(y*FBO_WIDTH + x) * 4 + 0], 0, 1, 0, 255);
-                    cpuConvolutionArray[x][y][1] = (GLubyte) remap(myArray [(y*FBO_WIDTH + x) * 4 + 1] , 0, 1, 0, 255);
-                    cpuConvolutionArray[x][y][2] = (GLubyte) remap(myArray [(y*FBO_WIDTH + x) * 4 + 2] , 0, 1, 0, 255);
-                    cpuConvolutionArray[x][y][3] = (GLubyte) 255;
 
+                    //(Y)*tilew + (X)
+                    sdataCPU[(blur_radius + ty) * tilewCPU + (blur_radius + tx)] = getPixelCPU(x, y, myArray);
+
+                    // borders
+                    if (threadId_x < blur_radius) {
+                        // left
+                        sdataCPU[(blur_radius + ty) * tilewCPU + (tx)] = getPixelCPU(x - blur_radius, y, myArray);
+                        // right
+                        sdataCPU[(blur_radius + ty) * tilewCPU + (blur_radius + bw + tx) ] = getPixelCPU(x + bw, y, myArray);
+                    }
+
+                    if (threadId_y < blur_radius) {
+                        // top
+                        sdataCPU[ (ty) * tilewCPU + (blur_radius + tx) ] = getPixelCPU(x, y - blur_radius, myArray);
+                        // bottom
+                        sdataCPU[ (blur_radius + bh + ty) * tilewCPU + (blur_radius + tx) ] = getPixelCPU(x, y + bh, myArray);
+                    }
+
+                    // load corners
+                    if ((threadId_x < blur_radius) && (threadId_y < blur_radius)) {
+                        // tl
+                        sdataCPU[(ty) * tilewCPU + tx] = getPixelCPU(x - blur_radius, y - blur_radius, myArray);
+                        // bl
+                        sdataCPU[(blur_radius + bh + ty) * tilewCPU + tx] = getPixelCPU(x - blur_radius, y + bh, myArray);
+                        // tr
+                        sdataCPU[(ty) * tilewCPU + (blur_radius + bw + tx)] = getPixelCPU(x + bh, y - blur_radius, myArray);
+                        // br
+                        sdataCPU[(blur_radius + bh + ty) * tilewCPU + (blur_radius + bw + tx)] = getPixelCPU(x + bw, y + bh, myArray);
+                    }
+
+                    float rsum = 0.0f;
+                    float gsum = 0.0f;
+                    float bsum = 0.0f;
+                    float samples = 0.0f;
+
+                    for (int dy = -blur_radius; dy <= blur_radius; dy++) {
+                        for (int dx = -blur_radius; dx <= blur_radius; dx++) {
+
+                            uchar4CPU pixel = sdataCPU[(blur_radius + ty + dy) * tilewCPU + (blur_radius + tx + dx)];
+
+                            // only sum pixels within disc-shaped kernel
+                            float l = dx * dx + dy * dy;
+
+                            if (l <= blur_radius * blur_radius) {
+                                float r = float(pixel.x);
+                                float g = float(pixel.y);
+                                float b = float(pixel.z);
+#if 1
+                                // brighten highlights
+                                float lum = (r + g + b) / (255 * 3);
+
+                                if (lum > 0.8f) {
+                                    r *= 4.0f;
+                                    g *= 4.0f;
+                                    b *= 4.0f;
+                                }
+
+#endif
+                                rsum += r;
+                                gsum += g;
+                                bsum += b;
+                                samples += 1.0f;
+                            }
+                        }
+                    }
+
+                    rsum /= samples;
+                    gsum /= samples;
+                    bsum /= samples;
+
+                    cpuConvolutionArray[x][y][0] = (GLubyte)clampToCPUInt(rsum, 0, 255);
+                    cpuConvolutionArray[x][y][1] = (GLubyte)clampToCPUInt(gsum, 0, 255);
+                    cpuConvolutionArray[x][y][2] = (GLubyte)clampToCPUInt(bsum, 0, 255);
+                    cpuConvolutionArray[x][y][3] = (GLubyte)255;
+                    //// ABGR
+                    //g_odata[y * imgw + x] = rgbToInt(rsum, gsum, bsum);
 
                 }
             }
         }
         
     }
+
+    //for (int y = 0; y < FBO_HEIGHT; y++) {
+    //    for (int x = 0; x < FBO_WIDTH; x++) {
+    //        float rSum = 0, gSum = 0, bSum = 0;
+    //        float rValue = 0, gValue = 0, bValue = 0;
+    //        int sample = 0;
+    //        for (int i = -KERNEL_RADIUS; i <= KERNEL_RADIUS; ++i) {
+    //            for (int j = -KERNEL_RADIUS; j <= KERNEL_RADIUS; ++j) {
+    //                int c_y = y + i;
+    //                int c_x = x + j;
+
+    //                if (c_x < 0 || c_x >(FBO_WIDTH - 1) || c_y < 0 || (c_y > (FBO_HEIGHT - 1)))
+    //                {
+    //                    rValue = 0; gValue = 0; bValue = 0;
+    //                }
+    //                else
+    //                {
+    //                    rValue = myArray[(c_y * FBO_WIDTH + c_x) * 4 + 0];
+    //                    gValue = myArray[(c_y * FBO_WIDTH + c_x) * 4 + 1];
+    //                    bValue = myArray[(c_y * FBO_WIDTH + c_x) * 4 + 2];
+    //                } 
+    //                rSum += rValue * kernel[(i + KERNEL_RADIUS) * KERNEL_LENGTH + (j + KERNEL_RADIUS)];
+    //                gSum += gValue * kernel[(i + KERNEL_RADIUS) * KERNEL_LENGTH + (j + KERNEL_RADIUS)];
+    //                bSum += bValue * kernel[(i + KERNEL_RADIUS) * KERNEL_LENGTH + (j + KERNEL_RADIUS)];
+    //                sample += 1;
+    //            }
+    //        }
+    //        cpuConvolutionArray[x][y][0] = (GLubyte)remap(rSum / sample, 0, 1, 0, 255);//rSum / sample;
+    //        cpuConvolutionArray[x][y][1] = (GLubyte)remap(gSum / sample, 0, 1, 0, 255);//gSum / sample;
+    //        cpuConvolutionArray[x][y][2] = (GLubyte)remap(bSum / sample, 0, 1, 0, 255);//bSum / sample;
+    //        cpuConvolutionArray[x][y][3] = 255;
+    //    }
+    //}
 }
+
 void display(void)
 {
     void display_sphere(GLint, GLint);
@@ -1528,15 +1702,17 @@ void display(void)
     modelViewProjectionMatrix = perspectiveProjectionMatrix * modelViewMatrix;
 
     glUniformMatrix4fv(mvpMatrixUniform, 1, GL_FALSE, modelViewProjectionMatrix);
-    glActiveTexture(GL_TEXTURE0);
-    if (enable_cuda_postProcess)
+    
+    if (onGPU)
     {
+        processImage();
+        glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, tex_cudaResult);
     }
-    else
+    else if (onCPU)    
     {
         //glBindTexture(GL_TEXTURE_2D, fbo_texture);
-        float *new_array = (float *)malloc(FBO_WIDTH * FBO_HEIGHT * 4 * sizeof(float));
+        
             glActiveTexture(GL_TEXTURE0);
             glBindTexture(GL_TEXTURE_2D, fbo_texture);
             /* get texture data from video memory */
@@ -1556,6 +1732,12 @@ void display(void)
            cpuConvolutionv2(new_array);
            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, FBO_WIDTH, FBO_HEIGHT, 0, GL_RGBA, GL_UNSIGNED_BYTE, (void *)cpuConvolutionArray);
     }
+    else
+    {
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, fbo_texture);
+    }
+    
     //
     glUniform1i(textureSamplerUniform, 0);
     glBindVertexArray(vao_cube);
@@ -1804,7 +1986,7 @@ void uninitialize(void)
 void uninitialize_sphere(void)
 {
     void deleteProgram(GLuint, GLsizei);
-    GLsizei numAttachedShaders;
+    GLsizei numAttachedShaders = 0;
     
     // Deletion and uninitialization of vbo_position
     if (vbo_elements_sphere)
